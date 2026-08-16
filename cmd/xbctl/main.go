@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	downloadBase = "https://github.com/cedar2025/xboard-node/releases"
+	downloadBase = "https://github.com/miyling/Xboard-Node/releases"
 )
 
 var (
@@ -1144,7 +1144,7 @@ func regenerateServiceFile() error {
 	}
 	unit := fmt.Sprintf(`[Unit]
 Description=Xboard Node Backend
-Documentation=https://github.com/cedar2025/xboard-node
+Documentation=https://github.com/miyling/Xboard-Node
 After=network-online.target
 Wants=network-online.target
 

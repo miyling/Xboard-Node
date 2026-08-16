@@ -27,7 +27,7 @@ $ErrorActionPreference = 'Stop'
 
 $appName = 'xboard-node'
 $serviceName = 'xboard-node'
-$releaseBase = 'https://github.com/cedar2025/xboard-node/releases'
+$releaseBase = 'https://github.com/miyling/Xboard-Node/releases'
 $installRoot = Join-Path $env:ProgramData 'xboard-node'
 $binRoot = Join-Path $env:ProgramFiles 'Xboard Node\bin'
 $configPath = Join-Path $installRoot 'config.yml'
