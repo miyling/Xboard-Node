@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package scope and applicable guideline index for the cross-platform Go implementation."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Repository directory and module placement guidance for new platform adapters and shared file helpers."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Error propagation and service/installer failure handling guidance."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Logging behavior is part of Windows Service and file-log compatibility."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Testing and validation expectations for the cross-platform change."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The change crosses runtime, CLI, service manager, installer, config, and release boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Platform adapters should centralize shared path, service, file-replacement, and credential logic."}
+{"file":".trellis/tasks/08-16-windows-server-support/research/windows-service-management.md","reason":"Research-backed decision for x/sys Windows Service/SCM APIs and Windows-specific risks."}

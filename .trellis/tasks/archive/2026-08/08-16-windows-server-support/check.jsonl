@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package scope and applicable guideline index for the review."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review service lifecycle, installer rollback, and platform error behavior against project guidance."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Review Windows service/file logging and secret redaction behavior."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review test, build, race, and cross-platform validation requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review consistency across runtime, CLI, SCM, installer, config, and release artifacts."}
+{"file":".trellis/tasks/08-16-windows-server-support/research/windows-service-management.md","reason":"Use the researched Windows API caveats and release-blocking validation list during review."}
