@@ -25,7 +25,7 @@ docker run -d --restart=always --network=host \
 ### Docker Compose
 
 ```bash
-git clone -b compose --depth 1 https://github.com/cedar2025/xboard-node.git
+git clone -b compose --depth 1 https://github.com/miyling/Xboard-Node.git
 cd xboard-node
 vim config/config.yml   # set panel.url / token / node_id
 docker compose up -d
@@ -35,12 +35,47 @@ docker compose up -d
 
 ```bash
 # Node mode
-curl -fsSL https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/miyling/Xboard-Node/dev/install.sh | \
   sudo bash -s -- --mode node --panel https://panel.example.com --token TOKEN --node-id 1
 
 # Machine mode
-curl -fsSL https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/miyling/Xboard-Node/dev/install.sh | \
   sudo bash -s -- --mode machine --panel https://panel.example.com --token TOKEN --machine-id 1
+```
+
+### Installer (Windows Server)
+
+Open PowerShell as Administrator. The installer downloads the Windows `.exe`
+artifacts, stores configuration under `%ProgramData%\xboard-node`, installs
+the native `xboard-node` Windows Service, and writes logs to
+`%ProgramData%\xboard-node\logs\xboard-node.log`.
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+Invoke-WebRequest https://raw.githubusercontent.com/miyling/Xboard-Node/dev/install.ps1 -OutFile .\install.ps1
+Invoke-WebRequest https://raw.githubusercontent.com/miyling/Xboard-Node/dev/scripts/windows-smoke.ps1 -OutFile .\windows-smoke.ps1
+
+# One-line node installation (run in an elevated PowerShell)
+& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/miyling/Xboard-Node/dev/install.ps1').Content)) -Mode node -Panel https://panel.example.com -Token TOKEN -NodeId 1
+
+# Node mode
+& .\install.ps1 -Mode node -Panel https://panel.example.com -Token TOKEN -NodeId 1
+
+# Machine mode
+& .\install.ps1 -Mode machine -Panel https://panel.example.com -Token TOKEN -MachineId 1
+
+# Upgrade / uninstall
+& .\install.ps1 -Action upgrade
+& .\install.ps1 -Action uninstall -Yes
+```
+
+Windows service operations are available through `xbctl.exe service
+<status|start|stop|restart|enable|disable|logs>`. The service command line
+contains only absolute config and credentials file paths; credentials are not
+placed in the Windows Service definition.
+
+On a Windows Server test host, the lifecycle smoke check can be run after
+installation with `.\windows-smoke.ps1 -HealthPort 65530`.
 
 ## xbctl
 

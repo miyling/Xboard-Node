@@ -19,14 +19,14 @@ import (
 )
 
 type Config struct {
-	InstanceID string `yaml:"-"`
-	Panel   PanelConfig   `yaml:"panel"`
-	Node    NodeConfig    `yaml:"node"`
-	Kernel  KernelConfig  `yaml:"kernel"`
-	Cert    CertConfig    `yaml:"cert"`
-	Log     LogConfig     `yaml:"log"`
-	Runtime RuntimeConfig `yaml:"runtime"`
-	WS      WSConfig      `yaml:"ws"`
+	InstanceID string        `yaml:"-"`
+	Panel      PanelConfig   `yaml:"panel"`
+	Node       NodeConfig    `yaml:"node"`
+	Kernel     KernelConfig  `yaml:"kernel"`
+	Cert       CertConfig    `yaml:"cert"`
+	Log        LogConfig     `yaml:"log"`
+	Runtime    RuntimeConfig `yaml:"runtime"`
+	WS         WSConfig      `yaml:"ws"`
 	// Standalone enables a local-only node that never contacts the panel.
 	Standalone *StandaloneConfig `yaml:"standalone,omitempty"`
 	// HealthPort enables a lightweight HTTP health-check endpoint on the
@@ -303,7 +303,10 @@ func (rc *RootConfig) assignInstanceIDs() error {
 func configBaseDir(configPath string) string {
 	abs, err := filepath.Abs(configPath)
 	if err != nil {
-		return "/etc/xboard-node"
+		if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+			return cwd
+		}
+		return "."
 	}
 	return filepath.Dir(abs)
 }
@@ -851,7 +854,11 @@ func InitLogger(cfg LogConfig) {
 		}
 	}
 
-	nlog.Init(w, minLevel, useColor)
+	if f, ok := w.(*os.File); ok && f != os.Stdout && f != os.Stderr {
+		nlog.InitWithCloser(w, minLevel, useColor, f)
+	} else {
+		nlog.Init(w, minLevel, useColor)
+	}
 	// Application logging goes through nlog; silence slog.Default for stray library use.
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 }

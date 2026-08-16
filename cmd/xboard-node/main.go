@@ -7,11 +7,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cedar2025/xboard-node/internal/config"
@@ -27,6 +26,7 @@ var (
 
 func main() {
 	configPath := flag.String("c", "config.yml", "config file path")
+	credentialsPath := flag.String("credentials", "", "credentials.env path (defaults to the config directory)")
 	showVersion := flag.Bool("v", false, "show version")
 	flag.Parse()
 
@@ -35,37 +35,50 @@ func main() {
 		os.Exit(0)
 	}
 
-	rootCfg, err := config.LoadRoot(*configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+	if err := runHosted(*configPath, *credentialsPath); err != nil {
+		fmt.Fprintf(os.Stderr, "xboard-node stopped with error: %v\n", err)
 		os.Exit(1)
 	}
+}
 
+// runApplication owns the platform-neutral node lifecycle. Platform host
+// files decide whether this lifecycle is attached to console signals or a
+// Windows Service control handler.
+func runApplication(ctx context.Context, configPath, credentialsPath string) error {
+	if credentialsPath == "" {
+		credentialsPath = filepath.Join(filepath.Dir(configPath), "credentials.env")
+	}
+	if err := config.LoadCredentialsFile(credentialsPath); err != nil {
+		return err
+	}
+
+	rootCfg, err := config.LoadRoot(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
 	instances, err := rootCfg.NormalizeInstances()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to normalize config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to normalize config: %w", err)
 	}
 	config.InitLogger(instances[0].Log)
 
 	// Apply runtime memory tuning before anything else allocates.
 	applyRuntimeConfig(instances[0].Runtime)
-
-	runWithReload(rootCfg, *configPath)
+	return runWithReload(ctx, rootCfg, configPath)
 }
 
 // runWithReload restarts all node services when the config file changes.
-func runWithReload(initialRoot *config.RootConfig, configPath string) {
+func runWithReload(parentCtx context.Context, initialRoot *config.RootConfig, configPath string) error {
 	var healthSrv *http.Server
 	var healthPort int
-	startHealth := func(port int) {
+	startHealth := func(port int) error {
 		if port <= 0 {
-			return
+			return nil
 		}
 		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
 			nlog.Core().Error("failed to start health check listener", "port", port, "error", err)
-			os.Exit(1)
+			return err
 		}
 		mux := http.NewServeMux()
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -73,33 +86,33 @@ func runWithReload(initialRoot *config.RootConfig, configPath string) {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
 		})
-		healthSrv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		healthSrv = srv
 		healthPort = port
 		go func() {
 			nlog.Core().Debug(fmt.Sprintf("health check listening on :%d", port))
-			if err := healthSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				nlog.Core().Warn("health check server stopped", "error", err)
 			}
 		}()
+		return nil
 	}
 
 	initialInstances, err := initialRoot.NormalizeInstances()
 	if err != nil {
-		nlog.Core().Error("failed to normalize initial config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to normalize initial config: %w", err)
 	}
-	startHealth(initialInstances[0].HealthPort)
+	if err := startHealth(initialInstances[0].HealthPort); err != nil {
+		return fmt.Errorf("start health check: %w", err)
+	}
 	defer func() {
 		if healthSrv != nil {
-			healthSrv.Close()
+			_ = healthSrv.Close()
 		}
 	}()
 
 	for root := initialRoot; ; {
-		ctx, cancel := context.WithCancel(context.Background())
-
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		ctx, cancel := context.WithCancel(parentCtx)
 
 		reloadCh := make(chan *config.RootConfig, 1)
 
@@ -113,40 +126,25 @@ func runWithReload(initialRoot *config.RootConfig, configPath string) {
 			nlog.Core().Warn("config watcher unavailable, hot-reload disabled", "error", err)
 		}
 
-		go func() {
-			select {
-			case sig := <-sigCh:
-				nlog.Core().Info(fmt.Sprintf("received %v, shutting down...", sig))
-				cancel()
-
-				select {
-				case sig = <-sigCh:
-					nlog.Core().Warn("received second signal, forcing exit", "signal", sig)
-					os.Exit(1)
-				case <-time.After(15 * time.Second):
-					nlog.Core().Error("shutdown timed out after 15s, forcing exit")
-					os.Exit(2)
-				}
-			case <-ctx.Done():
-			}
-		}()
-
 		instances, err := root.NormalizeInstances()
 		if err != nil {
-			nlog.Core().Error("failed to normalize config", "error", err)
-			os.Exit(1)
+			cancel()
+			return fmt.Errorf("failed to normalize config: %w", err)
 		}
 		if err := config.ValidateStartupLayout(instances); err != nil {
-			nlog.Core().Error("startup layout validation failed", "error", err)
-			os.Exit(1)
+			cancel()
+			return fmt.Errorf("startup layout validation failed: %w", err)
 		}
 
 		if instances[0].HealthPort != healthPort {
 			if healthSrv != nil {
-				healthSrv.Close()
+				_ = healthSrv.Close()
 				healthSrv = nil
 			}
-			startHealth(instances[0].HealthPort)
+			if err := startHealth(instances[0].HealthPort); err != nil {
+				cancel()
+				return fmt.Errorf("restart health check: %w", err)
+			}
 		}
 
 		errCh := make(chan error, len(instances))
@@ -205,27 +203,39 @@ func runWithReload(initialRoot *config.RootConfig, configPath string) {
 			nlog.Core().Info("config changed, restarting all services...")
 			cancel()
 			<-doneCh
+		case <-parentCtx.Done():
+			nlog.Core().Info("shutdown requested, stopping services...")
+			cancel()
+			select {
+			case <-doneCh:
+			case <-time.After(15 * time.Second):
+				return fmt.Errorf("shutdown timed out after 15s")
+			}
 		case <-doneCh:
 		}
 
-		signal.Stop(sigCh)
+		// Always release the per-reload context, including the path where a
+		// service exits on its own without calling cancel first.
+		cancel()
 		if watcher != nil {
 			watcher.Stop()
 		}
 
 		if newRoot == nil {
-			close(errCh)
-			if err := <-errCh; err != nil {
-				os.Exit(1)
+			select {
+			case err := <-errCh:
+				if err != nil {
+					return err
+				}
+			default:
 			}
 			nlog.Core().Info("stopped")
-			return
+			return nil
 		}
 
 		newInstances, err := newRoot.NormalizeInstances()
 		if err != nil {
-			nlog.Core().Error("failed to normalize reloaded config", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to normalize reloaded config: %w", err)
 		}
 		config.InitLogger(newInstances[0].Log)
 		applyRuntimeConfig(newInstances[0].Runtime)

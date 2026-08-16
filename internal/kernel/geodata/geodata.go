@@ -2,12 +2,12 @@ package geodata
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/cedar2025/xboard-node/internal/fileutil"
 	"github.com/cedar2025/xboard-node/internal/nlog"
 )
 
@@ -85,22 +85,8 @@ func atomicDownload(dst, url string) error {
 		return fmt.Errorf("unexpected HTTP status from %s: %s", url, resp.Status)
 	}
 
-	tmp := dst + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	defer os.Remove(tmp)
-
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
+	if err := fileutil.CopyAndReplace(dst, resp.Body, 0o644); err != nil {
 		return fmt.Errorf("write geo database: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		return fmt.Errorf("rename to destination: %w", err)
 	}
 	return nil
 }

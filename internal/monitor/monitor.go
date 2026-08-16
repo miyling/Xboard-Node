@@ -119,6 +119,13 @@ func collectNetSpeed() (inSpeed, outSpeed float64) {
 
 // Collect gathers current system metrics
 func Collect() Status {
+	return CollectAt("")
+}
+
+// CollectAt gathers metrics and uses the volume containing dataRoot for disk
+// usage. Windows has no meaningful filesystem root at "/", while Unix keeps
+// the historical root-volume behavior when dataRoot is empty.
+func CollectAt(dataRoot string) Status {
 	var s Status
 
 	s.Uptime = uint64(time.Since(startTime).Seconds())
@@ -150,7 +157,7 @@ func Collect() Status {
 		s.SwapUsed = swapStat.Used
 	}
 
-	if diskStat, err := disk.Usage("/"); err == nil {
+	if diskStat, err := disk.Usage(diskUsagePath(dataRoot)); err == nil {
 		s.DiskTotal = diskStat.Total
 		s.DiskUsed = diskStat.Used
 	}

@@ -431,7 +431,7 @@ func (s *Service) requestWSResync(ctx context.Context, reason string) {
 }
 
 func (s *Service) wsMetrics() map[string]interface{} {
-	status := monitor.Collect()
+	status := monitor.CollectAt(s.cfg.Kernel.ConfigDir)
 	m := s.buildMetrics(status)
 	m["kernel_status"] = s.kernel.IsRunning()
 	return m
@@ -978,7 +978,7 @@ func (s *Service) pushReportAsync() {
 	traffic := s.tracker.FlushTraffic()
 	aliveIPs := s.tracker.FlushAliveIPs()
 	online := s.tracker.CurrentOnline()
-	status := monitor.Collect()
+	status := monitor.CollectAt(s.cfg.Kernel.ConfigDir)
 	metrics := s.buildMetrics(status)
 	metrics["kernel_status"] = s.kernel.IsRunning()
 
@@ -1008,7 +1008,7 @@ func (s *Service) pushReportSync() {
 	traffic := s.tracker.FlushTraffic()
 	aliveIPs := s.tracker.FlushAliveIPs()
 	online := s.tracker.CurrentOnline()
-	status := monitor.Collect()
+	status := monitor.CollectAt(s.cfg.Kernel.ConfigDir)
 	metrics := s.buildMetrics(status)
 	metrics["kernel_status"] = s.kernel.IsRunning()
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -57,7 +58,6 @@ func WatchConfig(ctx context.Context, path string, onChange func(*Config)) (*Wat
 	return w, nil
 }
 
-
 // WatchConfigRoot watches path and reloads the root config model.
 func WatchConfigRoot(ctx context.Context, path string, onChange func(*RootConfig)) (*Watcher, error) {
 	absPath, err := filepath.Abs(path)
@@ -109,10 +109,10 @@ func (w *Watcher) loop(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if filepath.Clean(ev.Name) != w.path {
+			if !samePath(filepath.Clean(ev.Name), w.path) {
 				continue
 			}
-			if !ev.Has(fsnotify.Write) && !ev.Has(fsnotify.Create) {
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 				continue
 			}
 
@@ -135,23 +135,49 @@ func (w *Watcher) reload() {
 	if w.stopped.Load() {
 		return
 	}
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		if w.stopped.Load() {
+			return
+		}
+		if w.reloadOnce(&lastErr) {
+			return
+		}
+		// Atomic writers on Windows briefly expose the destination as missing
+		// while MoveFileEx completes. Retry only that transient condition; a
+		// malformed YAML should be reported immediately.
+		if !isTransientConfigError(lastErr) {
+			nlog.Core().Error("config reload failed, keeping current config", "error", lastErr)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	nlog.Core().Error("config reload failed, keeping current config", "error", lastErr)
+}
+
+func (w *Watcher) reloadOnce(lastErr *error) bool {
+	if _, err := os.Stat(w.path); err != nil {
+		*lastErr = err
+		return false
+	}
 	if w.onChangeRoot != nil {
 		root, err := LoadRoot(w.path)
 		if err != nil {
-			nlog.Core().Error("config reload failed, keeping current config", "error", err)
-			return
+			*lastErr = err
+			return false
 		}
 		nlog.Core().Info("config reloaded successfully")
 		w.onChangeRoot(root)
-		return
+		return true
 	}
 	cfg, err := Load(w.path)
 	if err != nil {
-		nlog.Core().Error("config reload failed, keeping current config", "error", err)
-		return
+		*lastErr = err
+		return false
 	}
 	nlog.Core().Info("config reloaded successfully")
 	w.onChange(cfg)
+	return true
 }
 
 func (w *Watcher) Stop() {

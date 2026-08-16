@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
+	"github.com/cedar2025/xboard-node/internal/fileutil"
 
 	"github.com/cedar2025/xboard-node/internal/cert/dnsproviders"
 	"github.com/cedar2025/xboard-node/internal/config"
@@ -102,11 +103,7 @@ func (m *Manager) persistPEM(cert, key []byte) {
 
 // atomicWriteFile writes data to a temp file and renames, preventing partial reads.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fileutil.WriteAtomic(path, data, perm)
 }
 
 // loadPersistedPEM loads previously persisted cert material from cert_dir.
