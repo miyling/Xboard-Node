@@ -271,9 +271,21 @@ func waitWindowsService(s *mgr.Service, want svc.State) error {
 		if st.State == want {
 			return nil
 		}
+		if want == svc.Running && st.State == svc.Stopped {
+			return windowsServiceStoppedError(st)
+		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	return fmt.Errorf("service did not reach %s", windowsServiceState(want))
+}
+
+func windowsServiceStoppedError(st svc.Status) error {
+	return fmt.Errorf(
+		"service stopped before running (Win32 exit code %d, service-specific exit code %d); inspect startup log %q",
+		st.Win32ExitCode,
+		st.ServiceSpecificExitCode,
+		defaultLogPath,
+	)
 }
 
 func updateWindowsServiceStartType(enable bool) error {

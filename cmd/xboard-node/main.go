@@ -36,6 +36,7 @@ func main() {
 	}
 
 	if err := runHosted(*configPath, *credentialsPath); err != nil {
+		reportHostError(*configPath, *credentialsPath, err)
 		fmt.Fprintf(os.Stderr, "xboard-node stopped with error: %v\n", err)
 		os.Exit(1)
 	}
@@ -45,6 +46,15 @@ func main() {
 // files decide whether this lifecycle is attached to console signals or a
 // Windows Service control handler.
 func runApplication(ctx context.Context, configPath, credentialsPath string) error {
+	return runApplicationWithReady(ctx, configPath, credentialsPath, nil)
+}
+
+// runApplicationWithReady is the service-aware variant of runApplication. The
+// optional ready callback is invoked once the local startup boundary has been
+// crossed: configuration and startup layout have been validated, the health
+// listener is ready, and the managed runtime goroutines have been launched.
+// Console callers keep using runApplication, so their lifecycle is unchanged.
+func runApplicationWithReady(ctx context.Context, configPath, credentialsPath string, ready func()) error {
 	if credentialsPath == "" {
 		credentialsPath = filepath.Join(filepath.Dir(configPath), "credentials.env")
 	}
@@ -64,13 +74,19 @@ func runApplication(ctx context.Context, configPath, credentialsPath string) err
 
 	// Apply runtime memory tuning before anything else allocates.
 	applyRuntimeConfig(instances[0].Runtime)
-	return runWithReload(ctx, rootCfg, configPath)
+	return runWithReload(ctx, rootCfg, configPath, ready)
 }
 
 // runWithReload restarts all node services when the config file changes.
-func runWithReload(parentCtx context.Context, initialRoot *config.RootConfig, configPath string) error {
+func runWithReload(parentCtx context.Context, initialRoot *config.RootConfig, configPath string, ready func()) error {
 	var healthSrv *http.Server
 	var healthPort int
+	var readyOnce sync.Once
+	signalReady := func() {
+		if ready != nil {
+			readyOnce.Do(ready)
+		}
+	}
 	startHealth := func(port int) error {
 		if port <= 0 {
 			return nil
@@ -196,6 +212,7 @@ func runWithReload(parentCtx context.Context, initialRoot *config.RootConfig, co
 			}()
 		}
 		go func() { wg.Wait(); close(doneCh) }()
+		signalReady()
 
 		var newRoot *config.RootConfig
 		select {

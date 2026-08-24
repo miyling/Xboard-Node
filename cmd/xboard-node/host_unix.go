@@ -14,3 +14,5 @@ func runHosted(configPath, credentialsPath string) error {
 	defer stop()
 	return runApplication(ctx, configPath, credentialsPath)
 }
+
+func reportHostError(_, _ string, _ error) {}

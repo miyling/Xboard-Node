@@ -109,6 +109,34 @@ function Wait-Healthy {
     throw "xboard-node did not become healthy at $url"
 }
 
+function Show-StartupDiagnostics {
+    if (-not (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+        Write-Warn "Startup log not found: $logPath"
+        return
+    }
+    try {
+        Write-Warn "Recent xboard-node startup log ($logPath):"
+        $lines = @(Get-Content -LiteralPath $logPath -Tail 80 -ErrorAction Stop)
+        $secrets = @()
+        if (Test-Path -LiteralPath $credentialsPath -PathType Leaf) {
+            foreach ($line in (Get-Content -LiteralPath $credentialsPath -ErrorAction SilentlyContinue)) {
+                if ($line -match '^\s*[^#=][^=]*=(.*)$') {
+                    $value = $Matches[1].Trim().Trim("'").Trim('"')
+                    if ($value) { $secrets += $value }
+                }
+            }
+        }
+        foreach ($line in $lines) {
+            foreach ($secret in $secrets) {
+                $line = $line.Replace($secret, '<redacted>')
+            }
+            Write-Host "  $line"
+        }
+    } catch {
+        Write-Warn "Could not read startup log: $($_.Exception.Message)"
+    }
+}
+
 function Backup-State {
     $backupRoot = Join-Path $installRoot ('backups\' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
@@ -221,6 +249,7 @@ function Install-OrUpgrade {
             Wait-Healthy
         } catch {
             Write-Warn "Installation failed; restoring the previous installation"
+            Show-StartupDiagnostics
             try {
                 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
                     Stop-ServiceIfPresent

@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality context for verification"}
+{"file": ".trellis/spec/backend/windows-support.md", "reason": "Windows runtime and SCM acceptance contract"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer verification checklist"}
+{"file": ".trellis/tasks/08-24-windows-service-startup-failure/research/startup-failure-analysis.md", "reason": "Evidence and known validation limitation"}
