@@ -162,3 +162,95 @@ status <- svc.Status{State: svc.StartPending, WaitHint: 10_000}
 go runApplicationWithReady(ctx, configPath, credentialsPath, signalReady)
 // report svc.Running only from signalReady; report Stopped(non-zero) on error
 ```
+
+## 8. Installer artifact download contract
+
+### 1. Scope / Trigger
+
+This contract applies when `install.ps1` or its upgrade path fetches the
+independent `xboard-node.exe` and `xbctl.exe` release artifacts before changing
+the installed service.
+
+### 2. Signatures
+
+- `-Binary` and `-XbctlBinary` remain optional local file overrides.
+- Remote artifact names remain
+  `xboard-node-windows-<arch>.exe` and `xbctl-windows-<arch>.exe`.
+- `aria2c.exe` is an optional executable discovered through `PATH`; no new
+  installer parameter or package-manager bootstrap is required.
+
+### 3. Contracts
+
+- If `aria2c.exe` is available, start one process per remote artifact with the
+  existing staging directory as its working directory, `--split=8`,
+  `--max-connection-per-server=8`, and the staged destination filename
+  (`xboard-node.exe` or `xbctl.exe`) as `--out`; the Release asset name remains
+  the URL's final artifact identifier.
+- If aria2 is unavailable, start one .NET `WebClient.DownloadFileTaskAsync`
+  task per remote artifact before awaiting any task. This path must work in
+  Windows PowerShell 5.1.
+- Local overrides use `Copy-Item` and do not invoke a downloader.
+- All downloads must finish successfully and produce regular files before
+  configuration generation, backup, file replacement, or service operations
+  begin.
+- The existing unique staging directory owns partial artifacts; downloader
+  processes/tasks and client handles must be stopped/cancelled and disposed on
+  both success and failure.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `aria2c.exe` absent | Use concurrent .NET tasks; do not require package installation. |
+| aria2 process exits non-zero | Report the artifact and exit code; do not replace the service. |
+| async task fails | Report the artifact and task error after started tasks are joined; do not replace the service. |
+| destination missing after success | Treat the download as failed and clean the staging directory. |
+| local override missing | Fail with a source-specific error before configuration/service changes. |
+| download failure with partial files | Release downloader resources and let the outer staging cleanup remove partial files. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: two remote artifacts start concurrently, aria2 uses split connections,
+  both complete, then `xbctl config init` and service installation run.
+- Base: one artifact is supplied locally and the other downloads through the
+  available path; the local artifact is copied without a network request.
+- Bad: invoke `Invoke-WebRequest` sequentially for both remote artifacts, or
+  install aria2 implicitly through winget/Chocolatey during the installer.
+
+### 6. Tests Required
+
+- Parse `install.ps1` on Windows PowerShell 5.1 without executing it.
+- With a test `aria2c.exe`, assert both processes are started before either is
+  waited on and that the expected split/server arguments and output names are
+  passed.
+- Without aria2, use a controlled endpoint to assert both
+  `DownloadFileTaskAsync` tasks start before either is awaited.
+- Exercise one local override plus one remote artifact, a failed remote
+  artifact, and missing output; assert service replacement is not reached and
+  the staging directory is removed.
+- Run the existing Windows lifecycle smoke test after a successful install.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```powershell
+Download-OrCopy $Binary $stagedNode $nodeArtifact
+Download-OrCopy $XbctlBinary $stagedCli $cliArtifact
+```
+
+This makes the second release download wait for the first and provides no
+per-file connection splitting.
+
+#### Correct
+
+```powershell
+$arguments = @('--split=8', '--max-connection-per-server=8', '--out=xboard-node.exe', $url)
+Start-Process -FilePath $aria2Path -WorkingDirectory $stage -ArgumentList $arguments ...
+$arguments = @('--split=8', '--max-connection-per-server=8', '--out=xbctl.exe', $url)
+Start-Process -FilePath $aria2Path -WorkingDirectory $stage -ArgumentList $arguments ...
+# join both before configuration and service replacement
+```
+
+When aria2 is unavailable, the equivalent correct boundary is two
+`DownloadFileTaskAsync` calls followed by joining both tasks.

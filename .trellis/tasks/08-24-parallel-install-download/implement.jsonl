@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for the Windows installer change"}
+{"file": ".trellis/spec/backend/windows-support.md", "reason": "Windows Server paths, installer rollback, credentials, and validation contracts"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared pre-development and cross-boundary thinking guidance"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Download orchestration crosses external release, staging, and service-install boundaries"}
+{"file": ".trellis/tasks/08-24-parallel-install-download/research/aria2-download-strategy.md", "reason": "Chosen aria2-first and PowerShell 5.1 fallback behavior"}

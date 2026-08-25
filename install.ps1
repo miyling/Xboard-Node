@@ -62,15 +62,143 @@ function Ensure-Directories {
     New-Item -ItemType Directory -Force -Path $installRoot, $binRoot, (Split-Path -Parent $logPath) | Out-Null
 }
 
-function Download-OrCopy([string]$Source, [string]$Destination, [string]$Artifact) {
+function Copy-LocalArtifact([string]$Source, [string]$Destination) {
     if ($Source) {
         if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { throw "Binary source not found: $Source" }
         Copy-Item -LiteralPath $Source -Destination $Destination -Force
+    }
+}
+
+function Invoke-ArtifactDownloads([object[]]$Artifacts, [string]$Stage) {
+    $remoteArtifacts = New-Object System.Collections.ArrayList
+    foreach ($artifact in $Artifacts) {
+        if ($artifact.Source) {
+            Copy-LocalArtifact $artifact.Source $artifact.Destination
+            continue
+        }
+        $artifact.Url = Resolve-DownloadUrl $artifact.Name
+        [void]$remoteArtifacts.Add($artifact)
+    }
+    if ($remoteArtifacts.Count -eq 0) { return }
+
+    $aria2 = Get-Command -Name 'aria2c.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($aria2) {
+        $aria2Path = $aria2.Source
+        if (-not $aria2Path) { $aria2Path = $aria2.Path }
+        if (-not $aria2Path) { $aria2Path = $aria2.Name }
+
+        $processes = New-Object System.Collections.ArrayList
+        $failureMessage = $null
+        $failureArtifact = $null
+        try {
+            foreach ($artifact in $remoteArtifacts) {
+                try {
+                    Write-Info "Downloading $($artifact.Url)"
+                    $arguments = @(
+                        '--allow-overwrite=true',
+                        '--auto-file-renaming=false',
+                        '--split=8',
+                        '--max-connection-per-server=8',
+                        "--out=$([System.IO.Path]::GetFileName($artifact.Destination))",
+                        $artifact.Url
+                    )
+                    $process = Start-Process -FilePath $aria2Path -WorkingDirectory $Stage -ArgumentList $arguments -PassThru -NoNewWindow
+                    [void]$processes.Add([pscustomobject]@{ Artifact = $artifact; Process = $process })
+                } catch {
+                    if (-not $failureMessage) {
+                        $failureMessage = $_.Exception.Message
+                        $failureArtifact = $artifact.Name
+                    }
+                }
+            }
+
+            foreach ($job in $processes) {
+                try {
+                    $job.Process.WaitForExit()
+                    if ($job.Process.ExitCode -ne 0) {
+                        throw "aria2c exited with code $($job.Process.ExitCode)"
+                    }
+                    if (-not (Test-Path -LiteralPath $job.Artifact.Destination -PathType Leaf)) {
+                        throw 'aria2c completed without producing the artifact'
+                    }
+                } catch {
+                    if (-not $failureMessage) {
+                        $failureMessage = $_.Exception.Message
+                        $failureArtifact = $job.Artifact.Name
+                    }
+                }
+            }
+
+            if ($failureMessage) {
+                throw "Download failed for $($failureArtifact): $failureMessage"
+            }
+        } finally {
+            foreach ($job in $processes) {
+                try {
+                    if (-not $job.Process.HasExited) {
+                        $job.Process.Kill()
+                        $job.Process.WaitForExit()
+                    }
+                } catch { }
+                try { $job.Process.Dispose() } catch { }
+            }
+        }
         return
     }
-    $url = Resolve-DownloadUrl $Artifact
-    Write-Info "Downloading $url"
-    Invoke-WebRequest -Uri $url -OutFile $Destination -UseBasicParsing
+
+    $jobs = New-Object System.Collections.ArrayList
+    $failureMessage = $null
+    $failureArtifact = $null
+    try {
+        foreach ($artifact in $remoteArtifacts) {
+            $client = $null
+            try {
+                Write-Info "Downloading $($artifact.Url)"
+                $client = New-Object System.Net.WebClient
+                $task = $client.DownloadFileTaskAsync([Uri]$artifact.Url, [string]$artifact.Destination)
+                [void]$jobs.Add([pscustomobject]@{ Artifact = $artifact; Client = $client; Task = $task })
+                $client = $null
+            } catch {
+                if ($client) {
+                    try { $client.Dispose() } catch { }
+                }
+                if (-not $failureMessage) {
+                    $failureMessage = $_.Exception.Message
+                    $failureArtifact = $artifact.Name
+                }
+            }
+        }
+
+        foreach ($job in $jobs) {
+            try {
+                $job.Task.GetAwaiter().GetResult()
+                if (-not (Test-Path -LiteralPath $job.Artifact.Destination -PathType Leaf)) {
+                    throw 'Download completed without producing the artifact'
+                }
+            } catch {
+                if (-not $failureMessage) {
+                    $failureMessage = $_.Exception.Message
+                    $failureArtifact = $job.Artifact.Name
+                }
+            }
+        }
+
+        if ($failureMessage) {
+            throw "Download failed for $($failureArtifact): $failureMessage"
+        }
+    } finally {
+        foreach ($job in $jobs) {
+            try {
+                if (-not $job.Task.IsCompleted) { $job.Client.CancelAsync() }
+            } catch { }
+        }
+        foreach ($job in $jobs) {
+            try {
+                if (-not $job.Task.IsCompleted) { $job.Task.Wait(1000) | Out-Null }
+            } catch { }
+            try { $job.Client.Dispose() } catch { }
+        }
+    }
 }
 
 function Invoke-Xbctl([string]$Executable, [string[]]$Arguments) {
@@ -225,8 +353,21 @@ function Install-OrUpgrade {
         $stagedConfig = Join-Path $stage 'config.yml'
         $stagedCredentials = Join-Path $stage 'credentials.env'
         $stagedMeta = Join-Path $stage 'install-meta.json'
-        Download-OrCopy $Binary $stagedNode (Resolve-Artifact 'xboard-node' $arch)
-        Download-OrCopy $XbctlBinary $stagedCli (Resolve-Artifact 'xbctl' $arch)
+        $artifacts = @(
+            [pscustomobject]@{
+                Name = Resolve-Artifact 'xboard-node' $arch
+                Source = $Binary
+                Destination = $stagedNode
+                Url = $null
+            },
+            [pscustomobject]@{
+                Name = Resolve-Artifact 'xbctl' $arch
+                Source = $XbctlBinary
+                Destination = $stagedCli
+                Url = $null
+            }
+        )
+        Invoke-ArtifactDownloads $artifacts $stage
         Prepare-Configuration $stagedCli $stagedConfig $stagedCredentials $stagedMeta
         $hadService = $null -ne (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)
         $backup = Backup-State
