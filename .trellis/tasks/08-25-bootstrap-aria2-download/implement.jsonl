@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for the Windows installer bootstrap change"}
+{"file": ".trellis/spec/backend/windows-support.md", "reason": "Windows installer, staging, cleanup, rollback, and download contracts"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared pre-development and boundary-thinking guidance"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Bootstrap crosses external release, verification, staging, and installer boundaries"}
+{"file": ".trellis/tasks/08-25-bootstrap-aria2-download/research/aria2-bootstrap-release.md", "reason": "Pinned official aria2 asset, digest, PowerShell APIs, and ARM64 limitation"}

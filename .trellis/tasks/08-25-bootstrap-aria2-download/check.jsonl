@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality context for installer verification"}
+{"file": ".trellis/spec/backend/windows-support.md", "reason": "Acceptance contract for Windows bootstrap security, cleanup, architecture, and rollback"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verification checklist for release, hash, extraction, staging, and service boundaries"}
+{"file": ".trellis/tasks/08-25-bootstrap-aria2-download/research/aria2-bootstrap-release.md", "reason": "Expected bootstrap asset and Windows validation constraints"}

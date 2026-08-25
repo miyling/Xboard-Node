@@ -36,6 +36,8 @@ $metaPath = Join-Path $installRoot 'install-meta.json'
 $logPath = Join-Path $installRoot 'logs\xboard-node.log'
 $nodePath = Join-Path $binRoot 'xboard-node.exe'
 $cliPath = Join-Path $binRoot 'xbctl.exe'
+$aria2BootstrapUrl = 'https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip'
+$aria2BootstrapSha256 = '67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288'
 
 function Write-Info([string]$Message) { Write-Host "[INFO] $Message" -ForegroundColor Green }
 function Write-Warn([string]$Message) { Write-Host "[WARN] $Message" -ForegroundColor Yellow }
@@ -69,7 +71,45 @@ function Copy-LocalArtifact([string]$Source, [string]$Destination) {
     }
 }
 
-function Invoke-ArtifactDownloads([object[]]$Artifacts, [string]$Stage) {
+function Get-Aria2Executable([string]$Arch, [string]$Stage) {
+    $aria2 = Get-Command -Name 'aria2c.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($aria2) {
+        if ($aria2.Source) { return $aria2.Source }
+        if ($aria2.Path) { return $aria2.Path }
+        return $aria2.Name
+    }
+
+    if ($Arch -ne 'amd64') { return $null }
+
+    $bootstrapRoot = Join-Path $Stage 'aria2-bootstrap'
+    $archivePath = Join-Path $bootstrapRoot 'aria2-1.37.0-win-64bit-build1.zip'
+    $extractRoot = Join-Path $bootstrapRoot 'extract'
+    try {
+        New-Item -ItemType Directory -Force -Path $bootstrapRoot | Out-Null
+        Write-Info 'Bootstrapping temporary aria2 for parallel downloads'
+        Invoke-WebRequest -Uri $aria2BootstrapUrl -OutFile $archivePath -UseBasicParsing
+        if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+            throw 'aria2 bootstrap archive was not created'
+        }
+
+        $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+        if ($hash -ine $aria2BootstrapSha256) {
+            throw 'aria2 bootstrap archive SHA-256 did not match the pinned digest'
+        }
+
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
+        $executables = @(Get-ChildItem -LiteralPath $extractRoot -Filter 'aria2c.exe' -File -Recurse -ErrorAction Stop)
+        if ($executables.Count -ne 1) {
+            throw "aria2 bootstrap archive contained $($executables.Count) aria2c.exe files; expected exactly one"
+        }
+        return $executables[0].FullName
+    } catch {
+        Write-Warn "Temporary aria2 bootstrap unavailable; using the built-in downloader: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Invoke-ArtifactDownloads([object[]]$Artifacts, [string]$Stage, [string]$Arch) {
     $remoteArtifacts = New-Object System.Collections.ArrayList
     foreach ($artifact in $Artifacts) {
         if ($artifact.Source) {
@@ -81,11 +121,8 @@ function Invoke-ArtifactDownloads([object[]]$Artifacts, [string]$Stage) {
     }
     if ($remoteArtifacts.Count -eq 0) { return }
 
-    $aria2 = Get-Command -Name 'aria2c.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($aria2) {
-        $aria2Path = $aria2.Source
-        if (-not $aria2Path) { $aria2Path = $aria2.Path }
-        if (-not $aria2Path) { $aria2Path = $aria2.Name }
+    $aria2Path = Get-Aria2Executable $Arch $Stage
+    if ($aria2Path) {
 
         $processes = New-Object System.Collections.ArrayList
         $failureMessage = $null
@@ -367,7 +404,7 @@ function Install-OrUpgrade {
                 Url = $null
             }
         )
-        Invoke-ArtifactDownloads $artifacts $stage
+        Invoke-ArtifactDownloads $artifacts $stage $arch
         Prepare-Configuration $stagedCli $stagedConfig $stagedCredentials $stagedMeta
         $hadService = $null -ne (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)
         $backup = Backup-State

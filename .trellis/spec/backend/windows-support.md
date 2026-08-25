@@ -176,8 +176,10 @@ the installed service.
 - `-Binary` and `-XbctlBinary` remain optional local file overrides.
 - Remote artifact names remain
   `xboard-node-windows-<arch>.exe` and `xbctl-windows-<arch>.exe`.
-- `aria2c.exe` is an optional executable discovered through `PATH`; no new
-  installer parameter or package-manager bootstrap is required.
+- `aria2c.exe` is preferably discovered through `PATH`; when absent, the
+  temporary bootstrap contract in section 9 may provide a verified amd64
+  executable. No new installer parameter or package-manager bootstrap is
+  required.
 
 ### 3. Contracts
 
@@ -186,9 +188,9 @@ the installed service.
   `--max-connection-per-server=8`, and the staged destination filename
   (`xboard-node.exe` or `xbctl.exe`) as `--out`; the Release asset name remains
   the URL's final artifact identifier.
-- If aria2 is unavailable, start one .NET `WebClient.DownloadFileTaskAsync`
-  task per remote artifact before awaiting any task. This path must work in
-  Windows PowerShell 5.1.
+- If system aria2 and the verified temporary bootstrap are unavailable, start
+  one .NET `WebClient.DownloadFileTaskAsync` task per remote artifact before
+  awaiting any task. This path must work in Windows PowerShell 5.1.
 - Local overrides use `Copy-Item` and do not invoke a downloader.
 - All downloads must finish successfully and produce regular files before
   configuration generation, backup, file replacement, or service operations
@@ -201,7 +203,7 @@ the installed service.
 
 | Condition | Required behavior |
 | --- | --- |
-| `aria2c.exe` absent | Use concurrent .NET tasks; do not require package installation. |
+| `aria2c.exe` absent | Try the pinned amd64 bootstrap; use concurrent .NET tasks for ARM64 or bootstrap failure without requiring package installation. |
 | aria2 process exits non-zero | Report the artifact and exit code; do not replace the service. |
 | async task fails | Report the artifact and task error after started tasks are joined; do not replace the service. |
 | destination missing after success | Treat the download as failed and clean the staging directory. |
@@ -223,8 +225,8 @@ the installed service.
 - With a test `aria2c.exe`, assert both processes are started before either is
   waited on and that the expected split/server arguments and output names are
   passed.
-- Without aria2, use a controlled endpoint to assert both
-  `DownloadFileTaskAsync` tasks start before either is awaited.
+- On ARM64 or with a forced bootstrap failure, use a controlled endpoint to
+  assert both `DownloadFileTaskAsync` tasks start before either is awaited.
 - Exercise one local override plus one remote artifact, a failed remote
   artifact, and missing output; assert service replacement is not reached and
   the staging directory is removed.
@@ -252,5 +254,87 @@ Start-Process -FilePath $aria2Path -WorkingDirectory $stage -ArgumentList $argum
 # join both before configuration and service replacement
 ```
 
-When aria2 is unavailable, the equivalent correct boundary is two
-`DownloadFileTaskAsync` calls followed by joining both tasks.
+When system aria2 and the verified bootstrap are unavailable, the equivalent
+correct boundary is two `DownloadFileTaskAsync` calls followed by joining both
+tasks.
+
+## 9. Temporary aria2 bootstrap contract
+
+### 1. Scope / Trigger
+
+This contract applies when the installer wants aria2's segmented downloads but
+`aria2c.exe` is not already available on the host.
+
+### 2. Signatures
+
+- `Get-Aria2Executable($Arch, $Stage)` returns an existing PATH executable, a
+  verified temporary executable, or `$null` for the built-in downloader.
+- The only bootstrap asset is the fixed official URL for
+  `aria2-1.37.0-win-64bit-build1.zip`.
+- The pinned SHA-256 is
+  `67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288`.
+
+### 3. Contracts
+
+- A PATH `aria2c.exe` always takes precedence and skips bootstrap.
+- Bootstrap is allowed only for `amd64`; `arm64` uses the built-in .NET path
+  when no system aria2 exists.
+- The ZIP is downloaded below the current unique staging directory, hashed
+  before extraction/use, and must contain exactly one regular `aria2c.exe`.
+- The temporary executable is never copied to Program Files, added to PATH,
+  registered in the registry, or written into a service definition.
+- The outer staging `finally` removes the archive and extracted executable after
+  downloader processes have been joined or terminated.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| PATH aria2 exists | Use it; do not download bootstrap. |
+| Architecture is ARM64 and PATH aria2 is absent | Skip x64 bootstrap and use .NET fallback. |
+| ZIP download/hash/extraction fails | Warn, never execute the unverified file, and use .NET fallback. |
+| Hash differs from the pinned digest | Treat bootstrap as unavailable and clean temporary files. |
+| ZIP has zero or multiple `aria2c.exe` files | Treat bootstrap as unavailable and use .NET fallback. |
+| Install or download fails after bootstrap | Terminate aria2 processes, then remove bootstrap resources with staging cleanup. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: amd64 without PATH aria2 downloads the pinned ZIP, verifies it, runs the
+  extracted `aria2c.exe`, and removes it after the install.
+- Base: ARM64 or a network failure uses the existing concurrent .NET downloader
+  without executing an x64 binary.
+- Bad: execute `aria2c.exe` before hashing the ZIP, follow a moving `latest`
+  bootstrap URL, or copy the executable into a permanent system directory.
+
+### 6. Tests Required
+
+- Assert PATH aria2 bypasses bootstrap.
+- On amd64, assert the fixed URL and digest are used, a valid archive produces
+  one executable, and bootstrap files are removed after success/failure.
+- Assert hash mismatch and missing executable never start aria2 and select .NET
+  fallback.
+- Assert ARM64 never downloads the x64 bootstrap.
+- Run PowerShell 5.1 parser/runtime and Windows lifecycle smoke tests on a
+  Windows host.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```powershell
+Invoke-WebRequest $movingLatestUrl -OutFile $archive
+Expand-Archive $archive $extract
+& (Join-Path $extract 'aria2c.exe')
+```
+
+This executes a moving, unverified third-party binary.
+
+#### Correct
+
+```powershell
+$hash = (Get-FileHash $archive -Algorithm SHA256).Hash
+if ($hash -ine $aria2BootstrapSha256) { throw 'digest mismatch' }
+Expand-Archive $archive -DestinationPath $extract
+```
+
+Only the verified temporary executable may be passed to `Start-Process`.
