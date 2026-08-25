@@ -47,3 +47,24 @@ Fixed Windows SCM readiness reporting, early startup diagnostics with credential
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Parallelize Windows installer downloads
+
+**Date**: 2026-08-25
+**Task**: Parallelize Windows installer downloads
+**Branch**: `dev`
+
+### Summary
+
+Implemented optional aria2c parallel and segmented downloads for install.ps1 with a PowerShell 5.1 .NET WebClient fallback. Preserved local overrides and service rollback flow, fixed staging output naming, updated the Windows deployment contract, and archived the task. git diff --check and JSONL validation passed; PowerShell, Windows smoke, and Go checks were unavailable on this macOS environment.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bcb2937` | (see git log) |
+
+### Status
+
+[OK] **Completed**
