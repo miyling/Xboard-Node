@@ -68,3 +68,24 @@ Implemented optional aria2c parallel and segmented downloads for install.ps1 wit
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Bootstrap temporary aria2 for Windows installer
+
+**Date**: 2026-08-25
+**Task**: Bootstrap temporary aria2 for Windows installer
+**Branch**: `dev`
+
+### Summary
+
+Added an amd64-only temporary aria2 bootstrap to install.ps1. It downloads a fixed official aria2 1.37.0 ZIP into staging, verifies SHA-256 before extraction/use, preserves PATH aria2 precedence, falls back to .NET on ARM64 or bootstrap failure, and cleans temporary resources through staging cleanup. Quality review and git diff checks passed; PowerShell 5.1 and Windows smoke validation remain deferred on macOS.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d2b28d7` | (see git log) |
+
+### Status
+
+[OK] **Completed**
