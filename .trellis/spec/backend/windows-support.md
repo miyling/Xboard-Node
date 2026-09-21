@@ -198,6 +198,19 @@ the installed service.
 - The existing unique staging directory owns partial artifacts; downloader
   processes/tasks and client handles must be stopped/cancelled and disposed on
   both success and failure.
+- aria2 processes are started with `System.Diagnostics.Process` +
+  `ProcessStartInfo` (`UseShellExecute = $false`), never with
+  `Start-Process -PassThru`. `Start-Process` returns a `Process` object that the
+  cmdlet did not spawn, so `ExitCode` reads back `$null` even after
+  `WaitForExit()` and a successful download is misreported as a failure.
+  `UseShellExecute = $false` with the default `CreateNoWindow` keeps the child
+  attached to the current console, so aria2 progress stays visible.
+- Arguments are joined into `ProcessStartInfo.Arguments` with quoting applied
+  per argument; `Start-Process -ArgumentList` joins array elements with spaces
+  without quoting, which corrupts any value containing whitespace.
+- The exit code is read once into a variable and an unreadable (`$null`) exit
+  code is reported as its own condition rather than interpolated into a
+  non-zero-exit message.
 
 ### 4. Validation & Error Matrix
 
@@ -205,6 +218,7 @@ the installed service.
 | --- | --- |
 | `aria2c.exe` absent | Try the pinned amd64 bootstrap; use concurrent .NET tasks for ARM64 or bootstrap failure without requiring package installation. |
 | aria2 process exits non-zero | Report the artifact and exit code; do not replace the service. |
+| aria2 exit code is unreadable (`$null`) | Report the artifact and the missing exit code; do not report a zero-length code as a non-zero exit. |
 | async task fails | Report the artifact and task error after started tasks are joined; do not replace the service. |
 | destination missing after success | Treat the download as failed and clean the staging directory. |
 | local override missing | Fail with a source-specific error before configuration/service changes. |
@@ -225,6 +239,9 @@ the installed service.
 - With a test `aria2c.exe`, assert both processes are started before either is
   waited on and that the expected split/server arguments and output names are
   passed.
+- With a test `aria2c.exe` that exits 0, assert the download step reports
+  success instead of reading a `$null` exit code as a failure; with one that
+  exits non-zero, assert the reported message contains the real code.
 - On ARM64 or with a forced bootstrap failure, use a controlled endpoint to
   assert both `DownloadFileTaskAsync` tasks start before either is awaited.
 - Exercise one local override plus one remote artifact, a failed remote
@@ -244,15 +261,39 @@ Download-OrCopy $XbctlBinary $stagedCli $cliArtifact
 This makes the second release download wait for the first and provides no
 per-file connection splitting.
 
+```powershell
+$process = Start-Process -FilePath $aria2Path -WorkingDirectory $stage `
+    -ArgumentList $arguments -PassThru -NoNewWindow
+$process.WaitForExit()
+if ($process.ExitCode -ne 0) { throw "aria2c exited with code $($process.ExitCode)" }
+```
+
+`Start-Process -PassThru` hands back a `Process` object that the cmdlet did not
+spawn, so `ExitCode` is `$null`. `$null -ne 0` is true, so the check fires after
+a download that actually succeeded and the install aborts with the empty
+message `aria2c exited with code `. `-ArgumentList` additionally joins the
+array with spaces and quotes nothing.
+
 #### Correct
 
 ```powershell
-$arguments = @('--split=8', '--max-connection-per-server=8', '--out=xboard-node.exe', $url)
-Start-Process -FilePath $aria2Path -WorkingDirectory $stage -ArgumentList $arguments ...
-$arguments = @('--split=8', '--max-connection-per-server=8', '--out=xbctl.exe', $url)
-Start-Process -FilePath $aria2Path -WorkingDirectory $stage -ArgumentList $arguments ...
-# join both before configuration and service replacement
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+$startInfo.FileName = $aria2Path
+$startInfo.WorkingDirectory = $stage
+$startInfo.UseShellExecute = $false
+$startInfo.Arguments = ($arguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -join ' '
+$process = New-Object System.Diagnostics.Process
+$process.StartInfo = $startInfo
+[void]$process.Start()
+# repeat for the second artifact before waiting on either, then join both
+$process.WaitForExit()
+$exitCode = $process.ExitCode
+if ($null -eq $exitCode) { throw 'aria2c exit code could not be determined' }
+if ($exitCode -ne 0) { throw "aria2c exited with code $exitCode" }
 ```
+
+A `Process` that started the child itself always has an `ExitCode` after
+`WaitForExit()`.
 
 When system aria2 and the verified bootstrap are unavailable, the equivalent
 correct boundary is two `DownloadFileTaskAsync` calls followed by joining both
@@ -337,4 +378,5 @@ if ($hash -ine $aria2BootstrapSha256) { throw 'digest mismatch' }
 Expand-Archive $archive -DestinationPath $extract
 ```
 
-Only the verified temporary executable may be passed to `Start-Process`.
+Only the verified temporary executable may be passed to
+`ProcessStartInfo.FileName`.

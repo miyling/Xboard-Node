@@ -71,6 +71,11 @@ function Copy-LocalArtifact([string]$Source, [string]$Destination) {
     }
 }
 
+function ConvertTo-ProcessArgument([string]$Argument) {
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    return '"' + ($Argument -replace '(\\*)"', '$1$1\"') + '"'
+}
+
 function Get-Aria2Executable([string]$Arch, [string]$Stage) {
     $aria2 = Get-Command -Name 'aria2c.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($aria2) {
@@ -139,7 +144,14 @@ function Invoke-ArtifactDownloads([object[]]$Artifacts, [string]$Stage, [string]
                         "--out=$([System.IO.Path]::GetFileName($artifact.Destination))",
                         $artifact.Url
                     )
-                    $process = Start-Process -FilePath $aria2Path -WorkingDirectory $Stage -ArgumentList $arguments -PassThru -NoNewWindow
+                    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+                    $startInfo.FileName = $aria2Path
+                    $startInfo.WorkingDirectory = $Stage
+                    $startInfo.UseShellExecute = $false
+                    $startInfo.Arguments = ($arguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -join ' '
+                    $process = New-Object System.Diagnostics.Process
+                    $process.StartInfo = $startInfo
+                    [void]$process.Start()
                     [void]$processes.Add([pscustomobject]@{ Artifact = $artifact; Process = $process })
                 } catch {
                     if (-not $failureMessage) {
@@ -152,8 +164,12 @@ function Invoke-ArtifactDownloads([object[]]$Artifacts, [string]$Stage, [string]
             foreach ($job in $processes) {
                 try {
                     $job.Process.WaitForExit()
-                    if ($job.Process.ExitCode -ne 0) {
-                        throw "aria2c exited with code $($job.Process.ExitCode)"
+                    $exitCode = $job.Process.ExitCode
+                    if ($null -eq $exitCode) {
+                        throw 'aria2c exit code could not be determined'
+                    }
+                    if ($exitCode -ne 0) {
+                        throw "aria2c exited with code $exitCode"
                     }
                     if (-not (Test-Path -LiteralPath $job.Artifact.Destination -PathType Leaf)) {
                         throw 'aria2c completed without producing the artifact'
